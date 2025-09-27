@@ -1,0 +1,213 @@
+---
+title: "HW1"
+author: "Chi-Erh Chiu"
+format: html
+embed-resources: true
+---
+
+# Step1
+
+```{r}
+ad_viz_plotval_data_2002 <- read.csv("~/PM566 Lab/PM566Labs/PM566_HW/ad_viz_plotval_data_2002.csv")
+ad_viz_plotval_data_2022 <- read.csv("~/PM566 Lab/PM566Labs/PM566_HW/ad_viz_plotval_data_2022.csv")
+
+data_2002 <- ad_viz_plotval_data_2002
+data_2022 <- ad_viz_plotval_data_2022
+
+dim(data_2002)
+dim(data_2022)
+
+head(data_2002)
+head(data_2022)
+
+tail(data_2002)
+tail(data_2022)
+
+str(data_2002)
+str(data_2022)
+
+summary(data_2002$Daily.Mean.PM2.5.Concentration)
+summary(data_2022$Daily.Mean.PM2.5.Concentration)
+
+hist(data_2002$Daily.Mean.PM2.5.Concentration)
+hist(data_2022$Daily.Mean.PM2.5.Concentration)
+```
+
+#### Summary:
+
+The 2002 dataset has 15,976 rows and 22 columns, while the 2022 dataset has 59,918 rows and 22 columns. Key variables include the Date of the sample, geographic identifiers like County and Local.Site.Name, the specific monitoring Site.ID, and location data like Site.Latitude and Site.Longitude for mapping. The primary variable for this analysis is the Daily.Mean.PM2.5.Concentration. The summary data shows the 2002 dataset has a mean value of 16.12 µg/m³ and a max value of 104.3 µg/m³, with a right-skewed distribution characterized by many moderate values. In contrast, the 2022 dataset shows a lower mean of 8.414 µg/m³ but a much higher max value of 302.5 µg/m³. The distribution for 2022 is also right-skewed but has a lower central tendency compared to 2002, despite occasional extreme peaks likely caused by wildfire smoke events. Overall, average PM2.5 levels in 2022 are roughly half of 2002 levels, signaling a long-term improvement in California’s air quality, though extreme pollution events are more prominent in the 2022 data.
+
+# Step2
+
+```{r}
+df_combined <- rbind(data_2002, data_2022)
+
+df_combined$Date <- as.Date(df_combined$Date, format = "%m/%d/%Y")
+df_combined$year <- as.numeric(format(df_combined$Date, "%Y"))
+names(df_combined)[names(df_combined) == "Daily.Mean.PM2.5.Concentration"] <- "pm25"
+names(df_combined)[names(df_combined) == "Daily.AQI.Value"] <- "aqi"
+names(df_combined)[names(df_combined) == "Site.ID"] <- "site_id"
+
+head(df_combined)
+
+tail(df_combined)
+
+table(df_combined$year)
+```
+
+# Step3
+
+```{r}
+library(leaflet)
+library(dplyr)
+
+sites_unique <- df_combined %>%
+  select(year, County, Site.Latitude, Site.Longitude) %>%
+  distinct()
+
+leaflet(data = sites_unique) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  setView(lng = -119.4179, lat = 36.7783, zoom = 6) %>%
+  addCircleMarkers(
+    lng = ~Site.Longitude,
+    lat = ~Site.Latitude,
+    color = ~ifelse(year == 2002, "blue", "red"),
+    radius = 3,
+    stroke = FALSE,
+    fillOpacity = 0.7,
+    popup = ~paste(County, year, sep = ", ")
+  ) %>%
+  addLegend(
+    "bottomright",
+    colors = c("blue", "red"),
+    labels = c("2002", "2022"),
+    title = "Year"
+  )
+
+```
+
+The spatial distribution of PM\$\_{2.5}\$ monitoring sites in California is heavily concentrated in urban and agricultural centers rather than being spread uniformly across the state. For both 2002 and 2022, the majority of sites are clustered in the Los Angeles metropolitan basin, the San Francisco Bay Area, and along the populated corridor of the Central Valley. Rural, mountainous, and desert regions, such as the Sierra Nevada and the Mojave Desert, have very sparse monitor coverage.
+
+Yes, the distribution changed significantly between 2002 and 2022. The primary change was a massive expansion and densification of the monitoring network. This is visible in two main ways, where many more monitoring sites were established within the existing 2002 footprint, providing more detailed data for major metropolitan areas. In addition, the network also expanded geographically into new areas that had little or no monitoring in 2002, improving the overall spatial reach of air quality assessment in the state.
+
+# Step4
+
+```{r}
+data_issues <- df_combined %>%
+  group_by(year) %>%
+  summarise(
+    total_obs = n(),
+    missing_obs = sum(is.na(pm25)),
+    implausible_obs = sum(pm25 < 0, na.rm = TRUE)
+  ) %>%
+  mutate(
+    missing_proportion = missing_obs / total_obs,
+    implausible_proportion = implausible_obs / total_obs
+  )
+print(data_issues)
+```
+
+The dataset has no missing PM2.5 values in either 2002 or 2022. In 2002, all values were valid. But in 2022, there are 215 negative PM2.5 records (about 0.36% of that year’s data). This means a new data quality issue, negative value, appeared in 2022 that wasn’t present before.
+
+# Step5
+
+```{r}
+library(ggplot2)
+
+df_clean <- df_combined %>%
+  filter(!is.na(pm25) & pm25 >= 0)
+```
+
+### Level 1: State
+
+```{r}
+state_summary <- df_clean %>%
+  group_by(year) %>%
+  summarise(
+    mean_pm25 = mean(pm25),
+    median_pm25 = median(pm25)
+  )
+print(state_summary)
+
+ggplot(df_clean, aes(x = as.factor(year), y = pm25, fill = as.factor(year))) +
+  geom_boxplot() +
+  coord_cartesian(ylim = c(0, 75)) +
+  labs(
+    title = "Statewide PM2.5 Readings",
+    x = "Year",
+    y = "Daily PM2.5"
+  ) +
+  theme_minimal() +
+  guides(fill = "none")
+```
+
+### Level 2: County
+
+```{r}
+
+county_summary <- df_clean %>%
+  group_by(year, County) %>%
+  summarise(mean_pm25 = mean(pm25), .groups = 'drop')
+
+
+top_counties_list <- county_summary %>%
+  filter(year == 2022) %>%
+  arrange(desc(mean_pm25)) %>%
+  slice(1:12) %>%
+  pull(County)
+
+top_county_data <- county_summary %>%
+  filter(County %in% top_counties_list)
+
+ggplot(top_county_data, aes(x = reorder(County, -mean_pm25), y = mean_pm25, fill = as.factor(year))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Mean PM2.5 in California's Most Polluted Counties",
+    x = "County",
+    y = "Mean PM2.5",
+    fill = "Year"
+  ) +
+  theme_minimal() +
+  # Rotate x-axis labels for readability
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### Level 3: City
+
+```{r}
+la_sites_summary <- df_clean %>%
+  filter(County == "Los Angeles") %>%
+  group_by(year, Local.Site.Name) %>%
+  summarise(mean_pm25 = mean(pm25), .groups = 'drop')
+
+# sites that have data for both years 
+sites_with_both_years <- la_sites_summary %>%
+  group_by(Local.Site.Name) %>%
+  filter(n() == 2) %>%
+  ungroup()
+
+  ggplot(sites_with_both_years, aes(x = reorder(Local.Site.Name, -mean_pm25), y = mean_pm25, fill = as.factor(year))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Mean PM2.5 at LA County Sites (Present in Both Years)",
+    x = "Monitoring Site",
+    y = "Mean PM2.5",
+    fill = "Year"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+The analysis at all three levels consistently shows a significant improvement in air quality, with lower PM2.5 concentrations across California in 2022 compared to 2002.
+
+### Level 1: State
+
+At the statewide level, there has been a dramatic reduction in PM2.5 pollution. The summary statistics show the statewide mean PM2.5 fell from 16.1μg/m3 in 2002 to 8.45μg/m3 in 2022, a drop of nearly 50%. The boxplot visualization confirms this by showing that the entire distribution of daily readings, including the median and the typical range of values, was substantially lower in 2022 than in 2002.
+
+### Level 2: County
+
+This trend of improved air quality holds true even in California's most polluted counties. The bar chart shows that counties with the highest PM2.5 levels in 2022, such as Kings, Tulare, and Kern, all had far higher pollution levels back in 2002. This demonstrates that the air quality improvements have been widespread and have significantly impacted the state's most vulnerable regions.
+
+### Level 3: City (Los Angeles County Sites)
+
+By refining the analysis to only include Los Angeles County sites with continuous data from both 2002 and 2022, the trend of improved air quality is strongly reinforced. This comparison shows that every single one of these long-standing monitoring sites, from Los Angeles-North Main Street to Lebec, experienced a substantial drop in mean PM2.5 levels. This confirms the air quality improvements are widespread and consistent over the two decades across different communities in the county.
